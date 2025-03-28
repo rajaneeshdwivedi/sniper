@@ -236,6 +236,7 @@ def plot_training_history(history, metrics, save_dir='plots'):
 	save_dir = Path(save_dir)
 	save_dir.mkdir(exist_ok=True)
 	
+	# Create main training summary plot
 	fig = plt.figure(figsize=(15, 12))
 	gs = plt.GridSpec(2, 2, figure=fig)
 	
@@ -258,35 +259,98 @@ def plot_training_history(history, metrics, save_dir='plots'):
 	plt.tight_layout()
 	plt.savefig(save_dir / 'training_summary.png', dpi=50, bbox_inches='tight')
 	plt.close()
-
-	# Plot duration prediction learning curve if available
-	if 'duration_metrics' in history and len(history['duration_metrics']) > 0:
-		plt.figure(figsize=(12, 6))
-		
-		# Extract epoch metrics
-		epochs = range(1, len(history['duration_metrics']) + 1)
-		mae_values = [metrics['mae'] for metrics in history['duration_metrics']]
-		mse_values = [metrics['mse'] for metrics in history['duration_metrics']]
-		
-		# Plot MAE
-		plt.subplot(1, 2, 1)
-		plt.plot(epochs, mae_values, 'b-', label='Duration MAE')
-		plt.xlabel('Epoch')
-		plt.ylabel('Mean Absolute Error')
-		plt.title('Duration Prediction MAE')
-		plt.grid(True, alpha=0.3)
-		
-		# Plot MSE
-		plt.subplot(1, 2, 2)
-		plt.plot(epochs, mse_values, 'r-', label='Duration MSE')
-		plt.xlabel('Epoch')
-		plt.ylabel('Mean Squared Error')
-		plt.title('Duration Prediction MSE')
-		plt.grid(True, alpha=0.3)
-		
+	
+	# Create a separate plot for precision @ k metrics
+	if all(key in history for key in ['precision_at_001', 'precision_at_005', 'precision_at_01']):
+		fig, ax = plt.subplots(figsize=(10, 6))
+		plot_precision_at_k_history(history, metrics, ax)
 		plt.tight_layout()
-		plt.savefig(save_dir / 'duration_learning_curve.png', dpi=50)
+		plt.savefig(save_dir / 'precision_at_k_history.png', dpi=100, bbox_inches='tight')
 		plt.close()
+	
+	# Create a separate plot for economic metrics
+	has_economic_metrics = any(key in history for key in [
+		'mean_return_at_001', 'mean_return_at_005', 'mean_return_at_01',
+		'sharpe_at_001', 'sharpe_at_005', 'sharpe_at_01'
+	])
+	
+	if has_economic_metrics:
+		plot_economic_metrics(history, metrics, save_dir)
+
+
+def plot_precision_at_k_history(history, metrics, ax=None):
+	"""
+	Plot precision @ k metrics history over epochs.
+	
+	Args:
+		history: Dictionary of training history metrics
+		metrics: Dictionary of test metrics
+		ax: Matplotlib axis to plot on
+	"""
+	import numpy as np
+	import matplotlib.pyplot as plt
+	
+	if ax is None:
+		fig, ax = plt.subplots(figsize=(10, 6))
+	
+	# Check if the required metrics are available
+	if all(key in history for key in ['precision_at_001', 'precision_at_005', 'precision_at_01']):
+		epochs = range(1, len(history['precision_at_001']) + 1)
+		
+		# Extract the precision values for each threshold
+		p_001_values = [float(p) for p in history['precision_at_001']]
+		p_005_values = [float(p) for p in history['precision_at_005']]
+		p_01_values = [float(p) for p in history['precision_at_01']]
+		
+		# Plot the precision values
+		ax.plot(epochs, p_001_values, 'r-', label='Precision @ 1%', linewidth=2)
+		ax.plot(epochs, p_005_values, 'g-', label='Precision @ 5%', linewidth=2)
+		ax.plot(epochs, p_01_values, 'b-', label='Precision @ 10%', linewidth=2)
+		
+		# Add final precision values as horizontal lines if available
+		if 'precision_at_0.01' in metrics:
+			final_p_001 = float(metrics['precision_at_0.01'])
+			ax.axhline(y=final_p_001, color='r', linestyle='--', 
+					  label=f'Final P@1%: {final_p_001:.4f}')
+		
+		if 'precision_at_0.05' in metrics:
+			final_p_005 = float(metrics['precision_at_0.05'])
+			ax.axhline(y=final_p_005, color='g', linestyle='--', 
+					  label=f'Final P@5%: {final_p_005:.4f}')
+		
+		if 'precision_at_0.1' in metrics:
+			final_p_01 = float(metrics['precision_at_0.1'])
+			ax.axhline(y=final_p_01, color='b', linestyle='--', 
+					  label=f'Final P@10%: {final_p_01:.4f}')
+		
+		# Add best epoch marker
+		if 'test_epoch' in metrics:
+			ax.axvline(x=metrics['test_epoch'], color='purple', linestyle='--', 
+					  label=f'Best epoch: {metrics["test_epoch"]}')
+		
+		# Add baseline (average positive rate) if available
+		if 'base_rate' in metrics:
+			base_rate = float(metrics['base_rate'])
+			ax.axhline(y=base_rate, color='k', linestyle=':', 
+					  label=f'Baseline: {base_rate:.4f}')
+		
+		ax.set_title('Precision @ k History')
+		ax.set_xlabel('Epoch')
+		ax.set_ylabel('Precision')
+		ax.legend(loc='best')
+		ax.grid(True, alpha=0.3)
+		
+		# Set y-axis limits with some padding
+		max_val = max(max(p_001_values), max(p_005_values), max(p_01_values))
+		ax.set_ylim([0, min(1.0, max_val * 1.1)])
+		
+		return ax
+	else:
+		if ax is not None:
+			ax.text(0.5, 0.5, "Precision @ k history not available", 
+					ha='center', va='center')
+			ax.axis('off')
+		return None
 
 
 def plot_network_statistics(history, ax):
@@ -1802,10 +1866,8 @@ def plot_rolling_performance(rolling_wins, rolling_duration, overall_win_rate, m
 
 
 
-
-
 def log_test_metrics(metrics, save_dir):
-	"""Save test metrics to a formatted text file"""
+	"""Save test metrics to a formatted text file with enhanced economic metrics"""
 	timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 	log_path = save_dir / f'test_metrics_{timestamp}.txt'
 	
@@ -1823,8 +1885,144 @@ def log_test_metrics(metrics, save_dir):
 		f.write(f"Base Rate: {metrics['base_rate']:.4f}\n")
 		f.write(f"Base Loss: {metrics.get('loss', 'N/A')}\n\n")
 		
-		# Threshold metrics
-		f.write("THRESHOLD METRICS\n")
+		# Enhanced precision @ k metrics with economic significance
+		f.write("PRECISION @ K METRICS WITH ECONOMIC SIGNIFICANCE\n")
+		f.write("-" * 50 + "\n")
+		
+		# Create a nice formatted table header
+		f.write(f"{'Threshold':<15} {'Precision':<12} {'Mean Return':<15} {'Sharpe':<10} {'Profit Factor':<15} {'Avg Win':<12} {'Avg Loss':<12} {'Count':<8}\n")
+		f.write("-" * 105 + "\n")
+		
+		# Top 1% metrics
+		if all(key in metrics for key in ['precision_at_0.01', 'threshold_at_0.01']):
+			f.write(f"Top 1% ({metrics['threshold_at_0.01']:.3f}): ")
+			f.write(f"{metrics['precision_at_0.01']:<12.4f} ")
+			
+			# Add return metrics if available
+			if 'mean_return_at_0.01' in metrics:
+				f.write(f"{metrics['mean_return_at_0.01']*100:<15.2f}% ")
+			else:
+				f.write(f"{'N/A':<15} ")
+				
+			# Add Sharpe ratio if available
+			if 'sharpe_at_0.01' in metrics:
+				f.write(f"{metrics['sharpe_at_0.01']:<10.2f} ")
+			else:
+				f.write(f"{'N/A':<10} ")
+				
+			# Add profit factor if available
+			if 'profit_factor_at_0.01' in metrics:
+				f.write(f"{metrics['profit_factor_at_0.01']:<15.2f} ")
+			else:
+				f.write(f"{'N/A':<15} ")
+				
+			# Add average win/loss if available
+			if 'avg_win_at_0.01' in metrics:
+				f.write(f"{metrics['avg_win_at_0.01']*100:<12.2f}% ")
+			else:
+				f.write(f"{'N/A':<12} ")
+				
+			if 'avg_loss_at_0.01' in metrics:
+				f.write(f"{metrics['avg_loss_at_0.01']*100:<12.2f}% ")
+			else:
+				f.write(f"{'N/A':<12} ")
+				
+			# Add count
+			if 'count_at_0.01' in metrics:
+				f.write(f"{metrics['count_at_0.01']:<8d}")
+			else:
+				f.write(f"{'N/A':<8}")
+			
+			f.write("\n")
+		
+		# Top 5% metrics
+		if all(key in metrics for key in ['precision_at_0.05', 'threshold_at_0.05']):
+			f.write(f"Top 5% ({metrics['threshold_at_0.05']:.3f}): ")
+			f.write(f"{metrics['precision_at_0.05']:<12.4f} ")
+			
+			# Add return metrics if available
+			if 'mean_return_at_0.05' in metrics:
+				f.write(f"{metrics['mean_return_at_0.05']*100:<15.2f}% ")
+			else:
+				f.write(f"{'N/A':<15} ")
+				
+			# Add Sharpe ratio if available
+			if 'sharpe_at_0.05' in metrics:
+				f.write(f"{metrics['sharpe_at_0.05']:<10.2f} ")
+			else:
+				f.write(f"{'N/A':<10} ")
+				
+			# Add profit factor if available
+			if 'profit_factor_at_0.05' in metrics:
+				f.write(f"{metrics['profit_factor_at_0.05']:<15.2f} ")
+			else:
+				f.write(f"{'N/A':<15} ")
+				
+			# Add average win/loss if available
+			if 'avg_win_at_0.05' in metrics:
+				f.write(f"{metrics['avg_win_at_0.05']*100:<12.2f}% ")
+			else:
+				f.write(f"{'N/A':<12} ")
+				
+			if 'avg_loss_at_0.05' in metrics:
+				f.write(f"{metrics['avg_loss_at_0.05']*100:<12.2f}% ")
+			else:
+				f.write(f"{'N/A':<12} ")
+				
+			# Add count
+			if 'count_at_0.05' in metrics:
+				f.write(f"{metrics['count_at_0.05']:<8d}")
+			else:
+				f.write(f"{'N/A':<8}")
+			
+			f.write("\n")
+		
+		# Top 10% metrics
+		if all(key in metrics for key in ['precision_at_0.1', 'threshold_at_0.1']):
+			f.write(f"Top 10% ({metrics['threshold_at_0.1']:.3f}): ")
+			f.write(f"{metrics['precision_at_0.1']:<12.4f} ")
+			
+			# Add return metrics if available
+			if 'mean_return_at_0.1' in metrics:
+				f.write(f"{metrics['mean_return_at_0.1']*100:<15.2f}% ")
+			else:
+				f.write(f"{'N/A':<15} ")
+				
+			# Add Sharpe ratio if available
+			if 'sharpe_at_0.1' in metrics:
+				f.write(f"{metrics['sharpe_at_0.1']:<10.2f} ")
+			else:
+				f.write(f"{'N/A':<10} ")
+				
+			# Add profit factor if available
+			if 'profit_factor_at_0.1' in metrics:
+				f.write(f"{metrics['profit_factor_at_0.1']:<15.2f} ")
+			else:
+				f.write(f"{'N/A':<15} ")
+				
+			# Add average win/loss if available
+			if 'avg_win_at_0.1' in metrics:
+				f.write(f"{metrics['avg_win_at_0.1']*100:<12.2f}% ")
+			else:
+				f.write(f"{'N/A':<12} ")
+				
+			if 'avg_loss_at_0.1' in metrics:
+				f.write(f"{metrics['avg_loss_at_0.1']*100:<12.2f}% ")
+			else:
+				f.write(f"{'N/A':<12} ")
+				
+			# Add count
+			if 'count_at_0.1' in metrics:
+				f.write(f"{metrics['count_at_0.1']:<8d}")
+			else:
+				f.write(f"{'N/A':<8}")
+			
+			f.write("\n")
+		
+		f.write("\n")
+		
+		# Standard threshold metrics
+		f.write("STANDARD THRESHOLD METRICS\n")
 		f.write("-" * 20 + "\n")
 		f.write(f"{'Trade %':<10} {'Precision':<10} {'Exp Gain':<10} {'Score':<10}\n")
 		f.write("-" * 50 + "\n")
@@ -1849,5 +2047,118 @@ def log_test_metrics(metrics, save_dir):
 		f.write("\n" + "=" * 50 + "\n")
 	
 	print(f"\nTest metrics saved to: {log_path}")
+ 
+ 
+def plot_economic_metrics(history, metrics, save_dir='plots'):
+	"""
+	Plot economic metrics (returns, Sharpe ratios) at different thresholds over epochs.
 	
-
+	Args:
+		history: Dictionary of training history metrics
+		metrics: Dictionary of test metrics
+		save_dir: Directory to save plots
+	"""
+	import matplotlib.pyplot as plt
+	import numpy as np
+	from pathlib import Path
+	
+	save_dir = Path(save_dir)
+	save_dir.mkdir(exist_ok=True)
+	
+	# Check if we have the economic metrics
+	has_return_metrics = all(key in history for key in [
+		'mean_return_at_001', 'mean_return_at_005', 'mean_return_at_01'
+	])
+	
+	has_sharpe_metrics = all(key in history for key in [
+		'sharpe_at_001', 'sharpe_at_005', 'sharpe_at_01'
+	])
+	
+	if not (has_return_metrics or has_sharpe_metrics):
+		return  # No economic metrics to plot
+	
+	# Create a figure for economic metrics
+	fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+	
+	# Get epoch values
+	epochs = range(1, len(history['precision_at_001']) + 1)
+	
+	# Plot returns over time
+	if has_return_metrics:
+		ax = axes[0]
+		
+		# Plot returns for different thresholds
+		ax.plot(epochs, [r*100 for r in history['mean_return_at_001']], 'r-', 
+				label='Return @ 1%', linewidth=2)
+		ax.plot(epochs, [r*100 for r in history['mean_return_at_005']], 'g-', 
+				label='Return @ 5%', linewidth=2)
+		ax.plot(epochs, [r*100 for r in history['mean_return_at_01']], 'b-', 
+				label='Return @ 10%', linewidth=2)
+		
+		# Add final values as horizontal lines
+		if 'mean_return_at_0.01' in metrics:
+			ax.axhline(y=metrics['mean_return_at_0.01']*100, color='r', linestyle='--',
+					  label=f'Final Return @ 1%: {metrics["mean_return_at_0.01"]*100:.2f}%')
+		
+		if 'mean_return_at_0.05' in metrics:
+			ax.axhline(y=metrics['mean_return_at_0.05']*100, color='g', linestyle='--',
+					  label=f'Final Return @ 5%: {metrics["mean_return_at_0.05"]*100:.2f}%')
+			
+		if 'mean_return_at_0.1' in metrics:
+			ax.axhline(y=metrics['mean_return_at_0.1']*100, color='b', linestyle='--',
+					  label=f'Final Return @ 10%: {metrics["mean_return_at_0.1"]*100:.2f}%')
+		
+		# Add zero line for reference
+		ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
+		
+		# Add best epoch marker
+		if 'test_epoch' in metrics:
+			ax.axvline(x=metrics['test_epoch'], color='purple', linestyle='--',
+					  label=f'Best epoch: {metrics["test_epoch"]}')
+		
+		ax.set_title('Expected Returns at Different Thresholds')
+		ax.set_xlabel('Epoch')
+		ax.set_ylabel('Expected Return (%)')
+		ax.legend(loc='best')
+		ax.grid(True, alpha=0.3)
+	
+	# Plot Sharpe ratios over time
+	if has_sharpe_metrics:
+		ax = axes[1]
+		
+		# Plot Sharpe ratios for different thresholds
+		ax.plot(epochs, history['sharpe_at_001'], 'r-', label='Sharpe @ 1%', linewidth=2)
+		ax.plot(epochs, history['sharpe_at_005'], 'g-', label='Sharpe @ 5%', linewidth=2)
+		ax.plot(epochs, history['sharpe_at_01'], 'b-', label='Sharpe @ 10%', linewidth=2)
+		
+		# Add final values as horizontal lines
+		if 'sharpe_at_0.01' in metrics:
+			ax.axhline(y=metrics['sharpe_at_0.01'], color='r', linestyle='--',
+					  label=f'Final Sharpe @ 1%: {metrics["sharpe_at_0.01"]:.2f}')
+		
+		if 'sharpe_at_0.05' in metrics:
+			ax.axhline(y=metrics['sharpe_at_0.05'], color='g', linestyle='--',
+					  label=f'Final Sharpe @ 5%: {metrics["sharpe_at_0.05"]:.2f}')
+			
+		if 'sharpe_at_0.1' in metrics:
+			ax.axhline(y=metrics['sharpe_at_0.1'], color='b', linestyle='--',
+					  label=f'Final Sharpe @ 10%: {metrics["sharpe_at_0.1"]:.2f}')
+		
+		# Add minimum acceptable Sharpe ratio line
+		ax.axhline(y=1.0, color='k', linestyle=':', alpha=0.5,
+				  label='Min acceptable Sharpe')
+		
+		# Add best epoch marker
+		if 'test_epoch' in metrics:
+			ax.axvline(x=metrics['test_epoch'], color='purple', linestyle='--',
+					  label=f'Best epoch: {metrics["test_epoch"]}')
+		
+		ax.set_title('Sharpe Ratios at Different Thresholds')
+		ax.set_xlabel('Epoch')
+		ax.set_ylabel('Sharpe Ratio')
+		ax.legend(loc='best')
+		ax.grid(True, alpha=0.3)
+	
+	plt.tight_layout()
+	plt.savefig(save_dir / 'economic_metrics_history.png', dpi=100, bbox_inches='tight')
+	plt.close()

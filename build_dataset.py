@@ -581,7 +581,10 @@ def fetch_multi_asset_data(engine, config):
 	return combined_df
 
 def split_by_dates(data, metadata_df, config):
-	"""Split dataset by dates with options for fixed-size validation and test splits
+	"""Split dataset by dates with improved algorithm to handle non-linear data density
+	
+	This improved algorithm accounts for increasing sample density over time
+	(e.g., when more assets are added throughout the dataset timespan)
 	
 	Args:
 		data: Dictionary containing unified_features and labels
@@ -605,47 +608,72 @@ def split_by_dates(data, metadata_df, config):
 	train_prop = dataset_params.get('train_proportion', 0.7)
 	val_prop = dataset_params.get('val_proportion', 0.15)
 	
-	# Sort unique timestamps to find split points
-	timestamps = sorted(metadata_df['closeTime'].unique())
+	# Sort timestamps and count total samples
+	metadata_df = metadata_df.sort_values('closeTime')
+	timestamps = metadata_df['closeTime'].unique()
 	total_timestamps = len(timestamps)
 	total_samples = len(metadata_df)
 	
-	# Calculate split indices based on either max size or proportion
+	print(f"\nTotal dataset: {total_samples} samples across {total_timestamps} unique timestamps")
+	
+	# Create a cumulative sample count over time
+	timestamp_sample_counts = metadata_df.groupby('closeTime').size()
+	cumulative_samples = timestamp_sample_counts.cumsum()
+	
+	# Calculate target samples for each split
 	if max_val_size and max_test_size:
-		# Estimate samples per timestamp
-		avg_samples_per_timestamp = total_samples / total_timestamps
-		
-		# Calculate how many timestamps we need for validation and test
-		val_timestamps_needed = min(
-			int(max_val_size / avg_samples_per_timestamp) + 1,  # +1 for safety
-			int(total_timestamps * val_prop)  # Cap at the original proportion
-		)
-		
-		test_timestamps_needed = min(
-			int(max_test_size / avg_samples_per_timestamp) + 1,  # +1 for safety
-			int(total_timestamps * (1 - train_prop - val_prop))  # Cap at the original proportion
-		)
-		
-		# Calculate indices
-		test_start_idx = total_timestamps - test_timestamps_needed
-		val_start_idx = test_start_idx - val_timestamps_needed
+		# Use max sizes for validation and test, remainder for training
+		val_size = min(max_val_size, int(total_samples * val_prop))
+		test_size = min(max_test_size, int(total_samples * (1 - train_prop - val_prop)))
 	else:
-		# Use original proportion-based approach
-		val_start_idx = int(total_timestamps * train_prop)
-		test_start_idx = int(total_timestamps * (train_prop + val_prop))
+		# Use proportions
+		val_size = int(total_samples * val_prop)
+		test_size = int(total_samples * (1 - train_prop - val_prop))
+
+	train_size = total_samples - val_size - test_size
 	
-	# Ensure indices are in valid range
-	val_start_idx = max(0, min(val_start_idx, total_timestamps - 2))
-	test_start_idx = max(val_start_idx + 1, min(test_start_idx, total_timestamps - 1))
+	print(f"Target split sizes: Train={train_size}, Val={val_size}, Test={test_size}")
 	
-	# Get epoch timestamps for splits
-	val_start_epoch = timestamps[val_start_idx]
-	test_start_epoch = timestamps[test_start_idx]
+	# Binary search to find split points based on cumulative sample counts
+	def binary_search_split(cumulative_counts, target_count):
+		"""Find the timestamp index where cumulative count is closest to target"""
+		left, right = 0, len(cumulative_counts) - 1
+		
+		while left <= right:
+			mid = (left + right) // 2
+			mid_count = cumulative_counts.iloc[mid]
+			
+			if mid_count == target_count:
+				return mid
+			elif mid_count < target_count:
+				left = mid + 1
+			else:
+				right = mid - 1
+		
+		# Handle edge cases and return best match
+		if left >= len(cumulative_counts):
+			return len(cumulative_counts) - 1
+		if right < 0:
+			return 0
+			
+		# Return the index that is closest to target count
+		left_diff = abs(cumulative_counts.iloc[left] - target_count) if left < len(cumulative_counts) else float('inf')
+		right_diff = abs(cumulative_counts.iloc[right] - target_count) if right >= 0 else float('inf')
+		
+		return left if left_diff < right_diff else right
+	
+	# Find split timestamps using binary search
+	val_start_idx = binary_search_split(cumulative_samples, train_size)
+	test_start_idx = binary_search_split(cumulative_samples, train_size + val_size)
+	
+	# Get actual timestamp values
+	val_start_epoch = cumulative_samples.index[val_start_idx]
+	test_start_epoch = cumulative_samples.index[test_start_idx]
 	
 	# Print the split dates for visibility
 	val_date = pd.to_datetime(val_start_epoch, unit='s')
 	test_date = pd.to_datetime(test_start_epoch, unit='s')
-	print(f"\nDynamic split dates calculated:")
+	print(f"\nImproved split dates calculated:")
 	print(f"Validation start: {val_date.strftime('%Y-%m-%d')} (epoch: {val_start_epoch})")
 	print(f"Test start: {test_date.strftime('%Y-%m-%d')} (epoch: {test_start_epoch})")
 	
@@ -671,6 +699,44 @@ def split_by_dates(data, metadata_df, config):
 	print(f"Train: {split_sizes['train']} samples ({actual_props['train']:.1%})")
 	print(f"Validation: {split_sizes['val']} samples ({actual_props['val']:.1%})")
 	print(f"Test: {split_sizes['test']} samples ({actual_props['test']:.1%})")
+	
+	# Visualize the timestamp distribution and split points
+	try:
+		import matplotlib.pyplot as plt
+		from pathlib import Path
+		
+		# Create a figure to visualize sample distribution
+		plt.figure(figsize=(12, 6))
+		timestamps_series = pd.Series(metadata_df['closeTime'])
+		timestamp_counts = timestamps_series.value_counts().sort_index()
+		cumulative_counts = timestamp_counts.cumsum()
+		
+		# Convert timestamps to dates for better visualization
+		date_index = pd.to_datetime(timestamp_counts.index, unit='s')
+		plt.plot(date_index, cumulative_counts, 'b-', label='Cumulative Sample Count')
+		
+		# Mark split points
+		val_date_index = pd.to_datetime(val_start_epoch, unit='s')
+		test_date_index = pd.to_datetime(test_start_epoch, unit='s')
+		
+		plt.axvline(x=val_date_index, color='g', linestyle='--', 
+				   label=f'Val Split ({split_sizes["val"]} samples)')
+		plt.axvline(x=test_date_index, color='r', linestyle='--', 
+				   label=f'Test Split ({split_sizes["test"]} samples)')
+		
+		plt.title('Dataset Split Points with Cumulative Sample Distribution')
+		plt.xlabel('Date')
+		plt.ylabel('Cumulative Samples')
+		plt.legend()
+		plt.grid(True, alpha=0.3)
+		
+		# Save the visualization
+		save_dir = Path(config['paths'].get('dataset_dir', '.'))
+		plt.savefig(save_dir / 'split_distribution.png', dpi=100, bbox_inches='tight')
+		plt.close()
+		print(f"Split visualization saved to: {save_dir / 'split_distribution.png'}")
+	except Exception as e:
+		print(f"Could not create visualization: {e}")
 	
 	# Create splits dictionary
 	splits = {}
