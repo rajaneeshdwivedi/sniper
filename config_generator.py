@@ -83,14 +83,25 @@ def generate_config(base_path, override=None):
 			"feature_crossing": True
 		},
 		"training_params": {
-			"precision_focus_percentile": 0.01,
-			"precision_weight": 1.0,
-			"confidence_weight": 0.2,
-			"smooth_factor": 0.1,
-			"scheduler_type": "precision_focused",
-			"precision_focus_epoch": 20,
-			"fine_tuning_lr": 1e-6,
-			"patience": 15
+			'learning_rate': 1e-5,  # Slightly more conservative learning rate
+			"min_learning_rate": 1e-6,
+			"batch_size": 128,  # Larger batch size for stability
+			"num_epochs": 300,
+			"patience": 15,  # Increased patience
+
+			'confidence_lr_multiplier': 1.0,  # Reduced multiplier for confidence branch
+			'weight_decay': 0.01,  # Keep L2 regularization
+			'scheduler_type': 'cosine_warmup',
+			'warmup_epochs': 5,  # Increased warmup period
+			'AdamW_beta1': 0.9,
+			'AdamW_beta2': 0.999,
+			"gradient_clip": 0.5,  # Increased gradient clipping threshold
+			"use_lr_scheduler": True,
+			"use_swa": False,
+			"swa_start": 10,
+			"use_swa_scheduler": True,
+			"swa_lr": 0.001,		  
+			"swa_anneal_epochs": 5  
 		},
 		"dataset_params": {
 			"mono_dataset": {
@@ -138,7 +149,7 @@ def generate_config(base_path, override=None):
 			"full_dataset": { 
 				"codes": "*"
 			},
-			"active_dataset": "extended_dataset",  # Use medium dataset for better generalization
+			"active_dataset": "large_dataset",  # Use medium dataset for better generalization
 			"basis": "4h",
 			"train_proportion": 0.7,
 			"val_proportion": 0.15,

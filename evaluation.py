@@ -364,7 +364,7 @@ class ModelEvaluator:
 
 		return test_metrics
 
-	def calculate_precision_at_k(self, prediction_scores, targets, metadata_df=None, k_percentages=[0.01, 0.05, 0.1], trading_fees=0.0075):
+	def calculate_precision_at_k(self, prediction_scores, targets, metadata_df=None, k_percentages=[0.01, 0.05, 0.1], trading_fees=0.0005):
 		"""
 		Calculate precision and expected returns at different k values (top k% of predictions)
 		
@@ -373,7 +373,7 @@ class ModelEvaluator:
 			targets: Array of true labels (0/1)
 			metadata_df: DataFrame containing metadata for each sample (optional)
 			k_percentages: List of percentages (0-1) to evaluate
-			trading_fees: Trading fees as a decimal (e.g., 0.0075 for 0.75% per transaction)
+			trading_fees: Trading fees as a decimal (e.g., 0.0005 for 0.05% per trade)
 			
 		Returns:
 			dict: Precision values and expected returns at each k percentage
@@ -393,26 +393,13 @@ class ModelEvaluator:
 			
 			if has_returns_data:
 				# Calculate fee-adjusted returns for each trade
-				# Entry fee: 0.75% of entry price
-				# Exit fee: 0.75% of exit price
-				# For winning trades: target_pct - entry_fee - exit_fee_adjusted
-				# For losing trades: -stop_pct - entry_fee - exit_fee_adjusted
+				# For winning trades: target_pct - 2*fees
+				# For losing trades: -stop_pct - 2*fees
+				total_fees = trading_fees * 2  # Entry and exit fees
 				
-				entry_fee = trading_fees  # 0.75% of entry price
-				
-				# For winning trades (target hit)
-				# If price rises by target_pct, exit fee is trading_fees * (1 + target_pct)
-				win_exit_fee_adjusted = sorted_metadata['target_pct'].apply(
-					lambda x: trading_fees * (1 + x)
-				)
-				win_returns = sorted_metadata['target_pct'] - entry_fee - win_exit_fee_adjusted
-				
-				# For losing trades (stop hit)
-				# If price falls by stop_pct, exit fee is trading_fees * (1 - stop_pct)
-				loss_exit_fee_adjusted = sorted_metadata['stop_pct'].apply(
-					lambda x: trading_fees * (1 - x)
-				)
-				loss_returns = -sorted_metadata['stop_pct'] - entry_fee - loss_exit_fee_adjusted
+				# Use actual target and stop values from metadata
+				win_returns = sorted_metadata['target_pct'] - total_fees
+				loss_returns = -sorted_metadata['stop_pct'] - total_fees
 				
 				# Create an array of expected returns based on the actual outcome
 				# This approach assumes binary outcomes (win/loss) and fixed target/stop values

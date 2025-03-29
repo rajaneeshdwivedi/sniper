@@ -163,6 +163,7 @@ class TrainingManager:
 		# Step ReduceLROnPlateau with validation loss
 		self.scheduler.step()
 	
+
 	def check_early_stopping(self, metrics, epoch):
 		"""
 		Check if training should stop early based on top percentile precision metrics.
@@ -177,15 +178,7 @@ class TrainingManager:
 			bool: True if training should stop, False otherwise
 		"""
 		# Extract the score used for early stopping
-		# Use precision at 1% if available, otherwise fall back to AUC
-		if 'precision_at_0.01' in metrics:
-			current_score = metrics['precision_at_0.01']
-			
-			# Optionally, consider a weighted combination of precision and expected return
-			# if 'mean_return_at_0.01' in metrics and metrics['mean_return_at_0.01'] > 0:
-			#	 current_score = current_score * (1 + metrics['mean_return_at_0.01'])
-		else:
-			current_score = metrics['auc']
+		current_score = metrics['auc']
 		
 		if current_score > self.best_score + self.min_delta:
 			# Improvement found
@@ -263,53 +256,6 @@ class TrainingManager:
 			except:
 				print("No best state available to restore")
 	
-	def evaluate_swa_model(self, train_loader, val_loader, train_loss, current_epoch):
-		"""Evaluate SWA model (if applicable)"""
-		if not self.use_swa or self.swa_model is None:
-			return None, self.best_score
-		
-		print("Evaluating SWA model...")
-		
-		# Update batch normalization statistics for SWA model
-		try:
-			update_bn(train_loader, self.swa_model)
-		except Exception as e:
-			print(f"Warning: Failed to update batch normalization statistics: {e}")
-			print("SWA model might not perform optimally with BatchNorm layers.")
-		
-		# Save original model state for potential rollback
-		original_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
-		
-		# Apply SWA weights to original model for evaluation
-		self.model.load_state_dict(self.swa_model.module.state_dict())
-		
-		# Evaluate SWA model
-		swa_val_metrics = collect_validation_metrics(self.model, self.criterion, val_loader, self.device)
-		swa_metrics = self.evaluator.evaluate_epoch(
-			train_loss, 
-			swa_val_metrics['total_loss'], 
-			val_loader
-		)
-		swa_score = swa_metrics['auc']
-		
-		print(f"SWA model score: {swa_score:.4f} vs Best non-SWA model score: {self.best_score:.4f}")
-		
-		if swa_score > self.best_score:
-			print("SWA model is better - saving as the final model")
-			self.best_score = swa_score
-			self.best_epoch = current_epoch  # Tag this as the best epoch (SWA epoch)
-			self.best_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
-			
-			# Save SWA model as the best model
-			self.save_checkpoint(swa_metrics, epoch=current_epoch, is_best=True, is_swa=True)
-			return swa_metrics, swa_score
-		else:
-			print("Reverting to best non-SWA model")
-			# Restore original model state
-			self.model.load_state_dict(original_state)
-			return None, self.best_score
-
-
 def collect_validation_metrics(model, criterion, val_loader, device):
 	"""Collect basic validation metrics"""
 	model.eval()
@@ -388,11 +334,10 @@ def collect_validation_metrics(model, criterion, val_loader, device):
 
 
 def create_scheduler(optimizer, config, train_loader=None):
-	"""Create an enhanced learning rate scheduler with precision-focused modifications"""
-	scheduler_type = config['training_params'].get('scheduler_type', 'precision_focused')
+	"""Create a learning rate scheduler based on configuration"""
+	scheduler_type = config['training_params'].get('scheduler_type', 'one_cycle')
 	
-	# Skip scheduler if explicitly disabled
-	if not config['training_params'].get('use_lr_scheduler', True):
+	if not config['training_params'].get('use_lr_scheduler', False):
 		return None
 	
 	# Retrieve scheduler-specific parameters
@@ -401,57 +346,7 @@ def create_scheduler(optimizer, config, train_loader=None):
 	min_lr = config['training_params'].get('min_learning_rate', max_lr / 100)
 	warmup_epochs = config['training_params'].get('warmup_epochs', 5)
 	
-	# Get parameters specific to precision-focused training
-	precision_focus_epoch = config['training_params'].get('precision_focus_epoch', 20)
-	fine_tuning_lr = config['training_params'].get('fine_tuning_lr', max_lr / 10)
-	
-	if scheduler_type == 'precision_focused':
-		# Custom scheduler that starts with standard warmup and cosine annealing,
-		# then drops to a lower LR for fine-tuning precision after a certain epoch
-		class PrecisionFocusedScheduler(torch.optim.lr_scheduler._LRScheduler):
-			"""
-			Custom scheduler with three phases:
-			1. Warmup: Linear warmup from low LR to max_lr
-			2. Cosine annealing: Standard cosine decay from max_lr to min_lr
-			3. Precision tuning: Drops to fine_tuning_lr for focused precision optimization
-			"""
-			def __init__(self, optimizer, warmup_epochs, total_epochs, 
-						max_lr, min_lr, precision_focus_epoch, fine_tuning_lr,
-						last_epoch=-1):
-				self.warmup_epochs = warmup_epochs
-				self.total_epochs = total_epochs
-				self.max_lr = max_lr
-				self.min_lr = min_lr
-				self.precision_focus_epoch = precision_focus_epoch
-				self.fine_tuning_lr = fine_tuning_lr
-				self.cosine_epochs = precision_focus_epoch - warmup_epochs
-				super(PrecisionFocusedScheduler, self).__init__(optimizer, last_epoch)
-				
-			def get_lr(self):
-				if self.last_epoch < self.warmup_epochs:
-					# Phase 1: Linear warmup
-					factor = self.last_epoch / self.warmup_epochs
-					return [self.min_lr + factor * (self.max_lr - self.min_lr) for _ in self.base_lrs]
-				elif self.last_epoch < self.precision_focus_epoch:
-					# Phase 2: Cosine annealing
-					epoch_in_phase = self.last_epoch - self.warmup_epochs
-					cosine_factor = 0.5 * (1 + math.cos(math.pi * epoch_in_phase / self.cosine_epochs))
-					return [self.min_lr + cosine_factor * (self.max_lr - self.min_lr) for _ in self.base_lrs]
-				else:
-					# Phase 3: Precision fine-tuning
-					return [self.fine_tuning_lr for _ in self.base_lrs]
-		
-		return PrecisionFocusedScheduler(
-			optimizer,
-			warmup_epochs=warmup_epochs,
-			total_epochs=num_epochs,
-			max_lr=max_lr,
-			min_lr=min_lr,
-			precision_focus_epoch=precision_focus_epoch,
-			fine_tuning_lr=fine_tuning_lr
-		)
-	
-	elif scheduler_type == 'one_cycle':
+	if scheduler_type == 'one_cycle':
 		# One Cycle LR
 		steps_per_epoch = len(train_loader) if train_loader else 1000
 		total_steps = num_epochs * steps_per_epoch
@@ -494,6 +389,68 @@ def create_scheduler(optimizer, config, train_loader=None):
 			schedulers=[warmup_scheduler, cosine_scheduler],
 			milestones=[warmup_epochs]
 		)
+	elif scheduler_type == 'cosine_warmup_restarts':
+		# Custom implementation of cosine annealing with warmup and restarts
+		class CosineWarmupRestartsScheduler(torch.optim.lr_scheduler._LRScheduler):
+			"""
+			Scheduler that implements warmup and cosine annealing with restarts.
+			"""
+			def __init__(self, optimizer, warmup_epochs, cycle_length, num_epochs, 
+						min_lr, max_lr, restart_multiplier=1.0, 
+						warmup_start_factor=0.1, last_epoch=-1):
+				self.warmup_epochs = warmup_epochs
+				self.cycle_length = cycle_length  # Length of each cycle before restart
+				self.num_epochs = num_epochs
+				self.min_lr = min_lr
+				self.max_lr = max_lr
+				self.restart_multiplier = restart_multiplier  # Multiplier for cycle length after each restart
+				self.warmup_start_factor = warmup_start_factor
+				super(CosineWarmupRestartsScheduler, self).__init__(optimizer, last_epoch)
+				
+			def get_lr(self):
+				if self.last_epoch < self.warmup_epochs:
+					# Linear warmup phase
+					alpha = self.last_epoch / self.warmup_epochs
+					factor = self.warmup_start_factor + (1 - self.warmup_start_factor) * alpha
+					return [base_lr * factor for base_lr in self.base_lrs]
+				
+				# After warmup - calculate where we are in the cycle
+				epoch_since_warmup = self.last_epoch - self.warmup_epochs
+				
+				# Determine which cycle we're in
+				cycle_epoch = epoch_since_warmup
+				cycle_idx = 0
+				cycle_start = 0
+				current_cycle_length = self.cycle_length
+				
+				# Find the current cycle and the epoch within that cycle
+				while cycle_start + current_cycle_length <= epoch_since_warmup:
+					cycle_start += current_cycle_length
+					cycle_idx += 1
+					current_cycle_length = int(self.cycle_length * (self.restart_multiplier ** cycle_idx))
+				
+				cycle_epoch = epoch_since_warmup - cycle_start
+				
+				# Apply cosine annealing within the current cycle
+				cosine_factor = 0.5 * (1 + math.cos(math.pi * cycle_epoch / current_cycle_length))
+				factor = self.min_lr / self.max_lr + cosine_factor * (1 - self.min_lr / self.max_lr)
+				
+				return [base_lr * factor for base_lr in self.base_lrs]
+		
+		# Parameters for cosine with restarts
+		cycle_length = config['training_params'].get('restart_cycle_length', num_epochs // 3)
+		restart_multiplier = config['training_params'].get('restart_multiplier', 1.5)
+		
+		return CosineWarmupRestartsScheduler(
+			optimizer,
+			warmup_epochs=warmup_epochs,
+			cycle_length=cycle_length,
+			num_epochs=num_epochs,
+			min_lr=min_lr,
+			max_lr=max_lr,
+			restart_multiplier=restart_multiplier,
+			warmup_start_factor=0.1
+		)
 	elif scheduler_type == 'reduce_on_plateau':
 		# Reduce on Plateau
 		return torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -502,6 +459,15 @@ def create_scheduler(optimizer, config, train_loader=None):
 			factor=0.5,
 			patience=5,
 			verbose=True
+		)
+	elif scheduler_type == 'swa':
+		# SWA learning rate scheduler
+		swa_lr = config['training_params'].get('swa_lr', min_lr)
+		return SWALR(
+			optimizer,
+			swa_lr=swa_lr,
+			anneal_epochs=config['training_params'].get('swa_anneal_epochs', 5),
+			anneal_strategy='cos'
 		)
 	else:
 		print(f"Warning: Unknown scheduler type '{scheduler_type}'. No scheduler will be used.")
@@ -696,13 +662,6 @@ def train_model(model, criterion, optimizer, train_loader, val_loader, config, e
 	final_metrics = epoch_metrics
 	best_epoch = training_manager.best_epoch  # Use the tracked best epoch
 	best_score = training_manager.best_score
-	
-	if training_manager.use_swa and epoch >= training_manager.swa_start:
-		swa_metrics, swa_score = training_manager.evaluate_swa_model(train_loader, val_loader, train_metrics['total_loss'], epoch)
-		if swa_metrics is not None:
-			final_metrics = swa_metrics
-			best_score = swa_score
-			best_epoch = training_manager.best_epoch  # Update with latest best epoch, which might be SWA epoch
 	
 	# Restore the best model
 	training_manager.restore_best_model()
