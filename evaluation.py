@@ -4,14 +4,17 @@ import numpy as np
 import pandas as pd
 
 from analytics import (
+	analyze_feature_importance,
 	calculate_composite_score,
 	calculate_precision_gain_at_rg1 
 )
 from visualisation import (
 	plot_prediction_analysis,
+	plot_feature_importance,
 	plot_training_history,
 	plot_classification_performance,
 	plot_confidence_analysis,
+	log_test_metrics
 )
 
 
@@ -288,6 +291,17 @@ class ModelEvaluator:
 		expected_confidence = 1.0 - prediction_error
 		confidence_correlation = np.corrcoef(all_confidence, expected_confidence)[0, 1]
 		
+		# Calculate feature importance
+		# try:
+		# 	importance_analysis = analyze_feature_importance(
+		# 		self.config, self.model, test_dataloader, self.device
+		# 	)
+		# except Exception as e:
+		# 	print(f"Warning: Feature importance analysis failed: {e}")
+		# 	importance_analysis = {
+		# 		'feature_details': []  # Empty list for compatibility
+		# 	}
+		
 		# Get composite metrics
 		test_metrics = calculate_composite_score(
 			pred_analysis['prediction_scores'],
@@ -298,6 +312,7 @@ class ModelEvaluator:
 		# Add additional information and confidence metrics
 		test_metrics.update({
 			'prediction_analysis': pred_analysis,
+			# 'feature_importance': importance_analysis,
 			'test_epoch': test_epoch,
 			'final_precision_gain_at_rg1': final_precision_gain_at_rg1,
 			'avg_confidence': float(np.mean(all_confidence)),
@@ -319,6 +334,11 @@ class ModelEvaluator:
 			except Exception as e:
 				print(f"Warning: Failed to create prediction analysis plot: {e}")
 				
+			# try:
+			# 	plot_feature_importance(importance_analysis, save_dir)
+			# except Exception as e:
+			# 	print(f"Warning: Failed to create feature importance plot: {e}")
+			
 			if self.metrics_history:
 				try:
 					plot_training_history(self.metrics_history, test_metrics, save_dir)
@@ -341,128 +361,8 @@ class ModelEvaluator:
 				)
 			except Exception as e:
 				print(f"Warning: Failed to create confidence analysis plot: {e}")
-				
-			# Generate precision metrics file
-			try:
-				# Import the precision metrics generator
-				from analytics import generate_precision_metrics
-				
-				# Generate and save precision metrics
-				generate_precision_metrics(
-					all_probs,
-					all_targets,
-					metadata_df,
-					save_dir
-				)
-				
-				print(f"Precision metrics generated and saved to {save_dir / 'precision_metrics.txt'}")
-			except ImportError:
-				# If the module is not available, write a simplified version directly
-				self._generate_simple_precision_metrics(
-					all_probs,
-					all_targets,
-					all_confidence,
-					save_dir
-				)
 
 		return test_metrics
-
-	def _generate_simple_precision_metrics(self, prediction_scores, targets, confidence_scores, save_dir):
-		"""Generate a simplified version of precision metrics directly"""
-		from pathlib import Path
-		import numpy as np
-		from datetime import datetime
-		from sklearn.metrics import roc_auc_score, average_precision_score
-		
-		# Calculate overall metrics
-		auc = roc_auc_score(targets, prediction_scores)
-		average_precision = average_precision_score(targets, prediction_scores)
-		baseline_precision = np.mean(targets)
-		
-		# Sort by prediction score
-		sorted_indices = np.argsort(prediction_scores)[::-1]
-		sorted_scores = prediction_scores[sorted_indices]
-		sorted_targets = targets[sorted_indices]
-		
-		# Calculate low volume precision metrics
-		low_volume_metrics = []
-		for pct in [0.01, 0.05, 0.10]:
-			n_samples = int(len(targets) * pct)
-			volume_targets = sorted_targets[:n_samples]
-			volume_scores = sorted_scores[:n_samples]
-			
-			precision = np.mean(volume_targets)
-			threshold = volume_scores[-1] if n_samples > 0 else 0
-			
-			# Calculate precision gain
-			if precision > baseline_precision:
-				precision_gain = (precision - baseline_precision) / (1 - baseline_precision)
-			else:
-				precision_gain = (precision - baseline_precision) / baseline_precision
-			
-			low_volume_metrics.append({
-				'pct': pct,
-				'precision': precision,
-				'gain': precision_gain,
-				'samples': n_samples,
-				'threshold': threshold
-			})
-		
-		# Low volume score (average precision gain)
-		low_volume_score = np.mean([m['gain'] for m in low_volume_metrics])
-		
-		# Confidence metrics
-		prediction_error = np.abs(prediction_scores - targets)
-		expected_confidence = 1.0 - prediction_error
-		calibration_error = np.mean(np.abs(confidence_scores - expected_confidence))
-		confidence_correlation = np.corrcoef(confidence_scores, expected_confidence)[0, 1]
-		avg_confidence = np.mean(confidence_scores)
-		
-		# Generate report
-		with open(save_dir / 'precision_metrics.txt', 'w') as f:
-			f.write("============================================================\n")
-			f.write("PRECISION-FOCUSED METRICS SUMMARY\n")
-			f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-			f.write("============================================================\n\n")
-			
-			# Overall metrics
-			f.write("OVERALL METRICS\n")
-			f.write("------------------------------\n")
-			f.write(f"AUC: {auc:.4f}\n")
-			f.write(f"Average Precision: {average_precision:.4f}\n")
-			f.write(f"Baseline Precision: {baseline_precision:.4f}\n\n")
-			
-			# Low volume precision metrics
-			f.write("LOW VOLUME PRECISION METRICS\n")
-			f.write("------------------------------\n")
-			f.write("Volume %   Precision    Gain       Sample Count  Threshold \n")
-			f.write("------------------------------------------------------------\n")
-			
-			for metric in low_volume_metrics:
-				f.write(f"{metric['pct']*100:<10.2f} {metric['precision']:<12.4f} {metric['gain']:<10.4f} {metric['samples']:<12d} {metric['threshold']:<10.4f}\n")
-			
-			f.write("\n")
-			
-			# Low volume score
-			f.write("LOW VOLUME SCORE\n")
-			f.write("------------------------------\n")
-			f.write(f"Overall Low Volume Score: {low_volume_score:.4f}\n\n")
-			
-			# Minimum volume for target precision
-			f.write("MINIMUM VOLUME FOR TARGET PRECISION\n")
-			f.write("------------------------------\n")
-			f.write(f"Target precision of 75% not achieved at any volume\n\n")
-			
-			# Confidence metrics
-			f.write("CONFIDENCE METRICS\n")
-			f.write("------------------------------\n")
-			f.write(f"Calibration Error: {calibration_error:.4f}\n")
-			f.write(f"Confidence-Correctness Correlation: {confidence_correlation:.4f}\n")
-			f.write(f"Average Confidence: {avg_confidence:.4f}\n\n")
-			
-			f.write("============================================================\n")
-			
-		print(f"Simplified precision metrics generated and saved to {save_dir / 'precision_metrics.txt'}")
 
 	def calculate_precision_at_k(self, prediction_scores, targets, metadata_df=None, k_percentages=[0.01, 0.05, 0.1], trading_fees=0.0005):
 		"""

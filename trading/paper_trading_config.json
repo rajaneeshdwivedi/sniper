@@ -1,0 +1,53 @@
+{
+	"database": {
+	  "connection_string": "mysql+pymysql://ctUser:-023poqw-023@127.0.0.1/ct"
+	},
+	"paths": {
+	  "log_dir": "logs",
+	  "report_dir": "reports"
+	},
+	"trading": {
+	  "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+	  "timeframe": "4h",
+	  "confidence_threshold": 0.7
+	},
+	"feature_generation": {
+	  "feature_groups": {
+		"price": [
+		  "open_ret",
+		  "high_ret",
+		  "close_ret"
+		],
+		"volatility": [
+		  "vol_atr_pct",
+		  "vol_bb_width",
+		  "vol_regime"
+		],
+		"vwap": [
+		  "vwap_support",
+		  "vwap_resistance",
+		  "vwap_low",
+		  "vwap_high"
+		]
+	  },
+	  "source_width": 500,
+	  "feature_width": 20,
+	  "label_params": {
+		"atr_target_mult": 2.5,
+		"atr_stop_mult": 2.5,
+		"atr_period": 14
+	  }
+	},
+	"model": {
+	  "model_path": "models/best_checkpoint.pt"
+	},
+	"paper_trading": {
+	  "initial_capital": 10000,
+	  "slippage": 0.0005,
+	  "trading_fee": 0.001,
+	  "base_risk_percent": 0.01,
+	  "max_risk_percent": 0.05,
+	  "stop_loss_percent": 0.02,
+	  "base_take_profit_percent": 0.03
+	}
+  }

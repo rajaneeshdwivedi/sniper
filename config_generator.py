@@ -86,9 +86,8 @@ def generate_config(base_path, override=None):
 			'learning_rate': 1e-5,  # Slightly more conservative learning rate
 			"min_learning_rate": 1e-6,
 			"batch_size": 128,  # Larger batch size for stability
-			"num_epochs": 200,
+			"num_epochs": 300,
 			"patience": 15,  # Increased patience
-			"min_delta": 0.0001,  # Reduced minimum delta for early stopping
 
 			'confidence_lr_multiplier': 1.0,  # Reduced multiplier for confidence branch
 			'weight_decay': 0.01,  # Keep L2 regularization
@@ -146,22 +145,7 @@ def generate_config(base_path, override=None):
 				"codes": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT", "XRPUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
 							"LTCUSDT", "BCHUSDT", "LINKUSDT", "ATOMUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT", "FILUSDT", "SHIBUSDT", "ETCUSDT", "VETUSDT",
 							"RUNEUSDT", "ALGOUSDT", "ICPUSDT", "LUNAUSDT", "EOSUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "1INCHUSDT"]
-			},		
-			"large_100_dataset": {
-				"codes": [
-					"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT", "XRPUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
-					"LTCUSDT", "BCHUSDT", "LINKUSDT", "ATOMUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT", "FILUSDT", "SHIBUSDT", "ETCUSDT", 
-					"VETUSDT", "RUNEUSDT", "ALGOUSDT", "ICPUSDT", "EOSUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "1INCHUSDT", "XLMUSDT",
-					"TRXUSDT", "THETAUSDT", "FTMUSDT", "HBARUSDT", "XMRUSDT", "XTZUSDT", "EGLDUSDT", "FLOWUSDT", "KSMUSDT", "NEOUSDT",
-					"CHZUSDT", "WAVESUSDT", "ZECUSDT", "ENJUSDT", "DASHUSDT", "YFIUSDT", "COMPUSDT", "BATUSDT", "RVNUSDT", "ZILUSDT",
-					"ONEUSDT", "XEMUSDT", "HOTUSDT", "IOTAUSDT", "CELOUSDT", "ONTUSDT", "BTTUSDT", "QTUMUSDT", "ZRXUSDT", "OMGUSDT",
-					"DGBUSDT", "ANKRUSDT", "CRVUSDT", "MINAUSDT", "KAVAUSDT", "ICXUSDT", "SRMUSDT", "GRTUSDT", "STORJUSDT", "ARUSDT",
-					"IOTXUSDT", "SXPUSDT", "SCUSDT", "CELRUSDT", "SKLUSDT", "STMXUSDT", "SNXUSDT", "RSRUSDT", "OCEANUSDT", "RENUSDT",
-					"ALPHAUSDT", "LRCUSDT", "KNCUSDT", "BNTUSDT", "REEFUSDT", "CTKUSDT", "BANDUSDT", "NKNUSDT", "FETUSDT", "DENTUSDT",
-					"OGNUSDT", "MKRUSDT", "AUDIOUSDT", "DODOUSDT", "CAKEUSDT", "ROSEBUSDT", "CTSIUSDT", "ALICEUSDT", "GTUSDT", "ARPAUSDT",
-					"LUNCUSDT", "BNXUSDT", "C98USDT", "APTUSDT", "OPUSDT", "GMTUSDT", "GALUSDT", "ENSUSDT", "FLMUSDT", "JASMYUSDT"
-				]
-			},   	
+			},			
 			"full_dataset": { 
 				"codes": "*"
 			},
@@ -191,7 +175,7 @@ def generate_config(base_path, override=None):
 		'paths': {
 			'run_dir': str(run_dir),
 			'models_dir': str(run_dir / 'models'),
-			'dataset_dir': '/mnt/hdd/streamlined_' + '-'.join(re.sub(r'USDT$', '', code) for code in updated_dataset_params['codes'])
+			'dataset_dir': '/mnt/hdd/streamlined_' + config['dataset_params']['basis'] + '_' + '-'.join(re.sub(r'USDT$', '', code) for code in updated_dataset_params['codes'])
 		},
 		'run_id': run_id
 	})

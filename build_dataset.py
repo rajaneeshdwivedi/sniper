@@ -260,7 +260,7 @@ def generate_labels(df, current_idx, target_pct, stop_pct):
 	Returns:
 		tuple: (label, metadata)
 			- label: 1 if target hit, 0 if stop hit, None if neither hit
-			- metadata: dict containing essential trade information
+			- metadata: dict containing trade information
 	"""
 	entry_price = df['close'].iloc[current_idx]
 	target_price = entry_price * (1 + target_pct)
@@ -280,23 +280,23 @@ def generate_labels(df, current_idx, target_pct, stop_pct):
 		if high >= target_price:
 			return 1, {
 				'bars_to_exit': i,
+				'exit_price': target_price,
 				'max_gain': max_gain,
 				'max_loss': max_loss,
 				'exit_type': 1,  # 1 = target hit
 				'target_pct': target_pct,
 				'stop_pct': stop_pct
-				# Removed exit_price
 			}
 		
 		if low <= stop_price:
 			return 0, {
 				'bars_to_exit': i,
+				'exit_price': stop_price,
 				'max_gain': max_gain,
 				'max_loss': max_loss,
 				'exit_type': 2,  # 2 = stop hit
 				'target_pct': target_pct,
 				'stop_pct': stop_pct
-				# Removed exit_price
 			}
 	
 	# If we reach here, neither target nor stop was hit
@@ -338,14 +338,15 @@ def precompute_labels(df, config, label_params):
 			continue
 			
 		# Add index and basic info
-		metadata['df_index'] = idx  # Keep this temporarily for mapping
-		metadata['label'] = label   # Keep this temporarily for processing
+		metadata['df_index'] = idx
+		metadata['label'] = label
 		metadata['code'] = df['code'].iloc[idx]
 		metadata['closeTime'] = df['closeTime'].iloc[idx]
 		
 		# Ensure all required fields exist
 		required_fields = {
 			'bars_to_exit': 0,
+			'exit_price': entry_price,
 			'max_gain': 0.0,
 			'max_loss': 0.0,
 			'exit_type': 0,
@@ -400,22 +401,16 @@ def process_window_with_precomputed(window_data, config, label_info=None):
 		print(f"Warning: NaN/Inf values found after normalization")
 		return None
 	
-	# Create metadata with only essential fields
-	metadata = {
-		'bars_to_exit': label_info['bars_to_exit'],
-		'max_gain': label_info['max_gain'],
-		'max_loss': label_info['max_loss'],
-		'exit_type': label_info['exit_type'],
-		'target_pct': label_info['target_pct'],
-		'stop_pct': label_info['stop_pct'],
-		'code': label_info['code'],
-		'closeTime': label_info['closeTime']
-		# Removed: df_index, exit_price, label, and norm_* fields
-	}
+	# Add normalization info to metadata
+	metadata = label_info.copy()
+	if norm_params:
+		metadata['norm_price_reference'] = norm_params['price']['reference']
+		metadata['norm_volume_mean'] = norm_params['volume']['mean']
+		metadata['norm_volume_std'] = norm_params['volume']['std']
 	
 	return {
 		'unified_features': normalized_features,
-		'label': label_info['label'],  # Still needed during processing
+		'label': label_info['label'],
 		'metadata': metadata
 	}
 
@@ -879,6 +874,7 @@ def parallel_multi_asset_feature_generation_with_precomputed(df, label_df, confi
 		'skipped_count': total_skipped
 	}
 
+# In build_dataset.py
 def save_datasets(splits, dataset_dir):
 	"""
 	Save split datasets to disk with binary classification labels.
@@ -899,21 +895,12 @@ def save_datasets(splits, dataset_dir):
 		# Update the in-memory data structure
 		data['y'] = binary_labels  # Replace with binary labels
 		
-		# Ensure metadata only contains necessary fields
-		essential_columns = [
-			'bars_to_exit', 'max_gain', 'max_loss', 'exit_type',
-			'target_pct', 'stop_pct', 'code', 'closeTime'
-		]
-		
-		# Only keep columns that actually exist in the metadata
-		existing_essential_columns = [col for col in essential_columns if col in data['metadata'].columns]
-		data['metadata'] = data['metadata'][existing_essential_columns]
-		
 		# Save metadata
 		data['metadata'].to_csv(dataset_dir / f'{name}_metadata.csv', index=False)
 		
 		# Print statistics about the binary targets
-		print(f"{name.upper()} split binary target  :  Positive: {np.sum(binary_labels == 1)} ({np.mean(binary_labels == 1):.1%})  -  Negative: {np.sum(binary_labels == 0)} ({np.mean(binary_labels == 0):.1%})")		
+		print(f"{name.upper()} split binary target  :  Positive: {np.sum(binary_labels == 1)} ({np.mean(binary_labels == 1):.1%})  -  Negative: {np.sum(binary_labels == 0)} ({np.mean(binary_labels == 0):.1%})")
+		
 				
 def calculate_atr_for_assets(df, period):
 	"""Calculate ATR for each asset separately"""

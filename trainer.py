@@ -521,7 +521,7 @@ def load_data(data_dir='data', batch_size=32, use_sampler=True):
 		# Get the composite target (continuous in range [-1, 1])
 		y_composite = data['y']
 		
-		# Load metadata - now with only essential columns
+		# Load metadata
 		metadata_df = pd.read_csv(data_dir / f'{split}_metadata.csv')
 		
 		# Create sampler for training data - derived from the sign of the composite target
