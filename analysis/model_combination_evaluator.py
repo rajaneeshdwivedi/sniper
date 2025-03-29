@@ -435,5 +435,3 @@ if __name__ == "__main__":
     main()
     
     
-    
-python model_combination_evaluator.py --daily_model /path/to/daily/model/models/best_checkpoint.pt --hourly_model /path/to/4h/model/models/best_checkpoint.pt --daily_data /path/to/daily_dataset/test.pt --hourly_data /path/to/4h_dataset/test.pt --output_dir model_combination_results
