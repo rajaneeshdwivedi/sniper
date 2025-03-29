@@ -178,7 +178,7 @@ class TrainingManager:
 			bool: True if training should stop, False otherwise
 		"""
 		# Extract the score used for early stopping
-		current_score = metrics['auc']
+		current_score = metrics['precision_gain_at_rg1']
 		
 		if current_score > self.best_score + self.min_delta:
 			# Improvement found
@@ -210,7 +210,7 @@ class TrainingManager:
 			'epoch': epoch,
 			'model_state_dict': self.model.state_dict(),
 			'optimizer_state_dict': self.optimizer.state_dict(),
-			'score': metrics['auc'],
+			'score': metrics['precision_gain_at_rg1'],
 			'config': self.config,
 			'metrics': metrics
 		}
@@ -230,7 +230,7 @@ class TrainingManager:
 			best_path = self.models_dir / 'best_checkpoint.pt'
 			torch.save(checkpoint, best_path)
 			print(f"\n*******************************************")
-			print(f"*** New best model saved. Score: {metrics['auc']:.4f} ***")
+			print(f"*** New best model saved. Score: {metrics['precision_gain_at_rg1']:.4f} ***")
 			print(f"*******************************************")
 		
 		# Save SWA checkpoint if it's an SWA model
@@ -521,7 +521,7 @@ def load_data(data_dir='data', batch_size=32, use_sampler=True):
 		# Get the composite target (continuous in range [-1, 1])
 		y_composite = data['y']
 		
-		# Load metadata
+		# Load metadata - now with only essential columns
 		metadata_df = pd.read_csv(data_dir / f'{split}_metadata.csv')
 		
 		# Create sampler for training data - derived from the sign of the composite target
