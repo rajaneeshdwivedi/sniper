@@ -86,7 +86,7 @@ def generate_config(base_path, override=None):
 			'learning_rate': 1e-5,  # Slightly more conservative learning rate
 			"min_learning_rate": 1e-6,
 			"batch_size": 128,  # Larger batch size for stability
-			"num_epochs": 300,
+			"num_epochs": 200,
 			"patience": 15,  # Increased patience
 
 			'confidence_lr_multiplier': 1.0,  # Reduced multiplier for confidence branch
